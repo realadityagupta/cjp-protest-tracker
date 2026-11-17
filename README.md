@@ -1,168 +1,215 @@
-# CJP Protest Tracker: from news to data
+# 📰 CJP Protest Tracker
 
-**Live dashboard:** *(paste your Streamlit link here after deploying)*
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cjp-protest-tracker-s8z98dvbxk4aqrkghp6avr.streamlit.app/)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-orange)
+![Sentence Transformers](https://img.shields.io/badge/NLP-sentence--embeddings-green)
 
-**Research question:** *Where, why and how did students protest exam paper leaks in India, and how did authorities respond?*
+**Where, why and how did students protest exam paper leaks in India, and how did authorities respond?**
 
-The project is in two parts:
-1. **Internship stage:** I built a pipeline that collects news about exam paper leaks from 3 sources (Google News RSS, GNews, NewsData.io) for 27 keywords and stores it in a Google Sheet.
-2. **This version (v2):** I measured how good that data was, fixed the extraction rules, trained ML models to sort each article into an **Event Type** (the best one reads the *meaning* of each headline using sentence embeddings), and built a dashboard to explore the results.
+This project turns about 2,000 scattered news articles into a clean dataset. Each article is labelled by an ML model as a *Protest*, a *Leak & Investigation*, or a *Court & Govt response* story, and the results can be explored in an interactive dashboard.
 
-## 1. Pipeline
+**🔗 Live dashboard:** https://cjp-protest-tracker-s8z98dvbxk4aqrkghp6avr.streamlit.app/
+*(It may take about 30 seconds to wake up if nobody has opened it recently.)*
+
+![Dashboard: Try the model](docs/dashboard_try_model.jpg)
+
+---
+
+## ⚡ Results at a glance
+
+| | Before | After |
+|---|---|---|
+| Wrong exam labels (substring bug, e.g. "CAT" in "edu**cat**ion") | 297 | **2** |
+| Duplicate stories | not detected | **78 removed** |
+| Event Type accuracy, macro F1 (old keyword rules → final ML model) | 0.41 | **0.74** |
+
+- **Learning beats rules:** every ML model beats the old keyword rules by at least 0.24 F1.
+- **Meaning beats words:** sentence embeddings (+0.08) beat every word-counting model.
+- **Main finding:** news coverage moved from *the leak* (64%) to *the protest* (48% of coverage from late July), centred on Delhi.
+
+---
+
+## Contents
+1. [How it works](#1-how-it-works)
+2. [Fixing data quality](#2-fixing-data-quality)
+3. [ML: classifying Event Type](#3-ml-classifying-event-type)
+4. [Findings](#4-findings)
+5. [Limitations and future work](#5-limitations-and-future-work)
+6. [Run it yourself](#6-run-it-yourself)
+
+---
+
+## 1. How it works
 
 ```
-News sources ──► Original notebook ──► 2,072 articles (spreadsheet)
-                                          │
-                                          ▼
-                  v2: clean ─► fixed rules ─► remove duplicate stories      → 1,986 clean articles
-                                          │
-                  150 hand-labelled ─► sentence embeddings + Logistic Reg.   → Event Type for every article
-                                          │
-                                          ▼
-                       charts + findings  ·  Streamlit dashboard
+News (Google News RSS · GNews · NewsData.io, 27 keywords)
+        │   original internship pipeline
+        ▼
+2,072 articles ─► clean ─► fixed rules ─► remove duplicate stories ─► 1,986 articles
+        │
+150 hand-labelled ─► sentence embeddings + Logistic Regression ─► Event Type for every article
+        │
+        ▼
+charts + findings  ·  Streamlit dashboard
 ```
 
-## 2. Fixing data quality (before vs after, same 2,072 articles)
+- **Stage 1 (internship):** a pipeline that collects paper-leak news from 3 sources into a Google Sheet.
+- **Stage 2 (this repo):** measure the data quality, fix the extraction rules, train and evaluate ML models, analyse the results, and build a dashboard.
 
-|  | Original output | New rules |
-| --- | --- | --- |
-| Exam = Unknown | 54% | 56%\* |
+## 2. Fixing data quality
+
+Measured on the same 2,072 articles:
+
+| | Original output | New rules |
+|---|---|---|
+| Wrong CAT / NDA / MAT labels | 297 | **2** (both real mentions) |
 | State = Unknown | 71% | **66%** |
-| Wrong CAT / NDA / MAT labels | **297** | **2** (both real mentions) |
-| Rows with HTML junk (`&nbsp;`) | 1,772 | 0 |
-| Exam Year guessed from publish date | 1,733 | 0 |
-| Duplicate stories removed | 0 | 78 |
-| Rows where an organisation is identified | not tracked | 38% |
+| Exam = Unknown | 54% | 56%\* |
+| Rows with HTML junk (`&nbsp;`) | 1,772 | **0** |
+| Exam Year guessed from publish date | 1,733 | **0** |
+| Duplicate stories removed | 0 | **78** |
+| Rows with an organisation identified | not tracked | **38%** |
 
-\* "Unknown exam" went up slightly *because the wrong labels were removed*. The old 54% looked better only because about 295 articles had a fake exam attached.
+\* "Unknown exam" rose slightly *because the fake labels were removed*. The old 54% only looked better because about 295 articles had a wrong exam attached.
 
-**The main bug:** `"CAT" in text` is also true for "edu**cat**ion". The fix is whole-word regex (`\b`), with longest names checked first ("NEET PG" before "NEET"). Ambiguous short names such as NDA (also the political alliance) only count when followed by *exam / paper / result / a year*. A city-to-state list (Patna → Bihar, Jantar Mantar → Delhi) finds more states. The notebook has `assert` checks for each bug.
+**The fixes:**
+- Whole-word regex (`\b`) instead of substring matching.
+- Longest names checked first ("NEET PG" before "NEET").
+- Ambiguous short names (e.g. NDA, which is also the political alliance) only count when followed by *exam / paper / result / a year*.
+- A city-to-state list (Patna → Bihar, Jantar Mantar → Delhi).
+- `assert` checks in the notebook prove each bug is fixed.
 
-## 3. Event Type: old rules vs ML models
+## 3. ML: classifying Event Type
 
-There are 4 labels: **Protest**, **Leak & Investigation**, **Court & Govt response**, **Not relevant**.
+**4 labels:** `Protest` · `Leak & Investigation` · `Court & Govt response` · `Not relevant`
 
-- 150 random articles were labelled as the answer key. Claude suggested a label for each, and I checked every one.
-- Each model was trained on 120 of them and tested on the 30 it never saw.
-- Two ML models were built. Both use **Logistic Regression**; they differ in how a headline is turned into numbers:
-  - **TF-IDF (words):** scores each word. It can show exactly *which words* drove a prediction.
-  - **Sentence embeddings (meaning):** a free pre-trained model, `all-MiniLM-L6-v2` (about 90 MB), turns each headline into 384 numbers that describe its *meaning*, so "arrested", "detained" and "held" end up close together. **This is the final model.**
+**Answer key:** 150 random articles. An AI assistant (Claude) suggested labels, and I checked every one.
 
-|  | Old keyword rules | TF-IDF + LR (words) | **Embeddings + LR (meaning)** |
-| --- | --- | --- | --- |
-| Accuracy (30 test articles) | 0.50 | 0.60 | **0.77** |
-| Macro F1 (test set) | 0.42 | 0.57 | **0.77** |
-| Macro F1 (all 150 for rules / 5-fold cross-validation for the models) | 0.41 | 0.70 | **0.74** |
-
-**What the scores mean:**
-- The old rules never predicted "Court & Govt response" correctly (F1 = 0.00), because "Paper Leak" was always checked first.
-- The word model learned sensible words for each label:
-  - *protesters, movement, Dipke* → Protest
-  - *paper leak, probe, arrest* → Leak & Investigation
-  - *court, cancelled, anti-paper (leak law), suspended* → Court & Govt response
-- The word model's weakest label is "Not relevant" (F1 0.25 on the test set), because routine exam notices use the same words as leak stories. The meaning model scores 0.77 on it, because it can tell a notice from a news event.
-- The 30-article test set is small, so one or two articles change its score a lot. Cross-validation is the more reliable number.
+**Two models**, both using Logistic Regression, differing in how a headline becomes numbers:
+- **Word model, TF-IDF:** scores each word. It can explain *which words* drove a prediction.
+- **Meaning model, sentence embeddings** (`all-MiniLM-L6-v2`): turns each headline into 384 numbers describing its *meaning*, so "arrested", "detained" and "held" land close together. **This is the final model.**
 
 ### Comparing 6 approaches
-Every approach was tested on the same 25 cross-validation splits (5 folds × 5 shuffles):
+Each was tested on the same 25 cross-validation splits (5 folds × 5 shuffles):
 
 | Approach | Macro F1 | ± spread | Accuracy |
 |---|---|---|---|
-| **Embeddings + Logistic Regression (final model)** | **0.74** | 0.09 | **0.75** |
+| **Embeddings + Logistic Regression (final)** | **0.74** | 0.09 | **0.75** |
 | Linear SVM (words) | 0.67 | 0.08 | 0.68 |
 | TF-IDF + Logistic Regression (words) | 0.66 | 0.08 | 0.67 |
 | Naive Bayes (words) | 0.65 | 0.09 | 0.68 |
 | Old keyword rules | 0.41 | 0.07 | 0.51 |
 | Always guess the most common label | 0.13 | 0.00 | 0.35 |
 
-- **Learning beats rules.** Every ML model scores at least 0.24 higher than the old keyword rules, and about 5 times higher than guessing.
-- **The three word models are tied.** Their differences (0.65–0.67) are much smaller than their spread (±0.08). Changing the *algorithm* didn't help.
-- **Reading meaning helped.** Changing *how text becomes numbers* added +0.08 over the best word model. The error analysis below showed the word models' main weakness ("counts words, doesn't understand the sentence"), and this tests the fix.
-- **Why keep the TF-IDF model too?** Embeddings can't be explained word by word. The dashboard's "Try the model" tab shows the meaning model's prediction, plus the word model's "Why?" table as a second opinion.
-- *Why 0.66 here and 0.70 earlier for TF-IDF?* The earlier number is a single 5-fold run. This one averages 25 runs, so it's the steadier estimate.
+- **The three word models are tied**: their gaps (0.65–0.67) are smaller than their spread. Changing the *algorithm* didn't help.
+- **Changing the *input* did:** reading meaning added +0.08.
+- **On a single 30-article test set**, the scores were: rules 0.42 → word model 0.57 → **meaning model 0.77**. The old rules never got "Court & Govt response" right (F1 0.00), because "Paper Leak" was always checked first.
 
 ![Model comparison](charts/model_comparison.png)
 
 ### Learning curve: would more labels help?
-Both models were trained on 24, 48, 72, 96 and 120 labelled articles, and tested each time on 30 unseen articles (20 random repeats):
 
 | Labelled articles used | 24 | 48 | 72 | 96 | 120 |
 |---|---|---|---|---|---|
 | Words (TF-IDF): test F1 | 0.45 | 0.55 | 0.62 | 0.64 | 0.65 |
-| Words (TF-IDF): training F1 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
 | **Meaning (embeddings): test F1** | **0.56** | **0.67** | **0.69** | **0.71** | **0.74** |
-| Meaning (embeddings): training F1 | 1.00 | 0.98 | 0.95 | 0.94 | 0.93 |
 
-- **The word model slows down.** Its first 48 extra labels added +0.17, its last 48 only +0.03.
-- **The meaning model starts higher and keeps rising.** With only 24 labels it already scores 0.56, about what the word model needs 48 to reach. It is still climbing at 120 labels (0.71 → 0.74), so **more labels would very likely keep improving it**.
-- **The meaning model memorises less.** The word model is perfect on articles it has seen (1.00) but 0.65 on new ones, which is strong overfitting. The meaning model's gap is much smaller (0.93 vs 0.74), so it generalises better.
-- **Conclusion:** the embeddings change fixed the "words only" bottleneck. The next bottleneck is the **number of labels**.
+- The **word model slows down**: its first 48 extra labels added +0.17, its last 48 only +0.03. It is also perfect on its own training data (1.00) but 0.65 on new data, which is strong overfitting.
+- The **meaning model starts higher and is still rising at 120**, with a smaller train/test gap (0.93 vs 0.74). **More labels is the next step.**
 
 ![Learning curve](charts/learning_curve.png)
 
-### Error analysis of the word model: where does it go wrong?
-This analysis was done on the TF-IDF word model, and it's what motivated trying the meaning model above. Each of the 150 labelled articles was predicted by a model that **had not seen it in training** (5-fold `cross_val_predict`). The model got **107 right and 43 wrong (29%)**. The mistakes fall into four patterns:
+### Error analysis: why the word model fails
+Each labelled article was predicted by a model that hadn't seen it (5-fold `cross_val_predict`): **107 right, 43 wrong**.
 
-| Pattern | Mistakes | Example | Words that misled it |
-|---|---|---|---|
-| **1. "Paper leak" drowns out the real action.** A court or government action *about* a leak is called "Leak" | 11 (biggest) | *"7 govt teachers suspended over SSC paper leak"* → Leak (should be Court & Govt) | paper, paper leak, leak |
-| **2. "CJP" has two meanings.** The model learned CJP = protest, but "CJP" is also the *Chief Justice of Pakistan*, and "cockroach" has other meanings | 6 | *"CJP stresses swift resolution of tax disputes"* → Protest (should be Not relevant) | cjp, tax disputes |
-| **3. The protest word is rare.** Words like *bandh* or *backed students protesting* appear too rarely in 150 headlines | 4 | *"NEET paper leak, Bihar bandh, and the test of democracy"* → Leak (should be Protest) | paper, paper leak |
-| **4. Exam notices look like leak news.** Routine notices share words with leak stories | 5 | *"HPBOSE Class 12 Hindi Question Paper with Answer Key"* → Leak (should be Not relevant) | paper, question, answer |
+| Pattern | Mistakes | Example |
+|---|---|---|
+| **"Paper leak" drowns out the real action** | 11 | *"7 govt teachers suspended over SSC paper leak"* → Leak (should be Court & Govt) |
+| **"CJP" has two meanings** (also the Chief Justice of Pakistan) | 6 | *"CJP stresses swift resolution of tax disputes"* → Protest (should be Not relevant) |
+| **Exam notices look like leak news** | 5 | *"HPBOSE Class 12 Question Paper with Answer Key"* → Leak (should be Not relevant) |
+| **Rare protest words** (*bandh*) | 4 | *"NEET paper leak, Bihar bandh…"* → Leak (should be Protest) |
 
-**What this teaches:**
-- **The model counts words; it doesn't understand the sentence.** "Paper leak" is the strongest word in the data, so it wins even when the real event is a suspension, a bail order or a bandh. This is the main limit of TF-IDF.
-- **Some mistakes are confident.** The terror-case headline that mentions "CJP protest" was called Protest with 69% confidence, so a high confidence score isn't a guarantee.
-- **How to fix each pattern:**
-  1. More Court & Govt examples that mention a leak.
-  2. A filter for non-Indian "CJP" stories, or a model that reads context (embeddings, which was then tried above).
-  3. More protest examples.
-  4. A simple rule for exam notices (*admit card, answer key, registration*).
-- Some mistakes are **genuinely borderline**: a person could reasonably pick either label. That's another reason scores above about 0.8 are unrealistic with 4 overlapping labels.
+**Lesson:** the word model *counts words* but doesn't *understand the sentence*. That is what led to trying the meaning model.
+
+The dashboard's **🤖 Try the model** tab shows both models side by side: the meaning model's prediction, plus the word model's "Why?" table.
 
 ## 4. Findings
-> *Draft observations from the charts in `charts/`. I wrote the final wording in my own words.*
 
-1. **Coverage moved from the leak to the protest.** From April to mid-July 2026, 64% of relevant articles were about leaks and investigations and only 13% about protests. From 27 July, protests became the biggest share at 48% (`1_events_over_time.png`).
-2. **Delhi was the centre of the protests.** 85 protest articles mention Delhi (Jantar Mantar, the Parliament march), far ahead of Jharkhand (31), where students protested the JPSC/JSSC exams (`2_protests_by_state.png`).
-3. **NEET UG dominates the news**, with 294 relevant articles. It is also the exam with the most protest articles (72). State commission exams (BPSC, UPPSC) appear mainly as leak stories (`3_exams.png`).
-4. **Authorities responded mainly through courts and new laws.** The Supreme Court (78 articles) and High Courts (46) appear more often than any investigating agency, and Parliament amended the anti-paper-leak law. In Rajasthan (RPSC), court and government stories (37) outnumber leak stories (27).
-5. **One protest group led the movement.** CJP is mentioned in 311 relevant articles, more than three times the exam body NTA (88) and more than any political party (`4_organisations.png`).
+1. **Coverage moved from the leak to the protest.** From April to mid-July 2026, 64% of relevant articles were about leaks and investigations and 13% about protests. From 27 July, protests became the largest share at 48%.
+2. **Delhi was the centre of the protests**, with 85 protest articles (Jantar Mantar, the Parliament march). Jharkhand was second with 31 (JPSC/JSSC exams).
+3. **NEET UG dominates** with 294 relevant articles and the most protest coverage (72). State exams (BPSC, UPPSC) appear mainly as leak stories.
+4. **Authorities responded mostly through courts and laws.** The Supreme Court (78 articles) and High Courts (46) appear more than any investigating agency, and Parliament amended the anti-paper-leak law. In Rajasthan, court and government stories (37) outnumber leak stories (27).
+5. **One group led the movement:** CJP appears in 311 articles, more than three times the exam body NTA (88), and more than any political party.
 
-## 5. Limitations
-- **Headlines only:** the original pipeline did not save full article text, so the model reads headlines (plus a short description for 177 articles).
-- **Small answer key:** with 150 labels and only 30 test rows, the test-set score is noisy. Cross-validation is more stable.
-- **Collection bias:** Google News returns the most recent results first, so the weeks just before collection (early August 2026) are over-represented.
-- **One label per field:** an article about two exams or two states gets only the first match.
-- **Pre-labelling:** the suggested labels may have influenced my labelling.
+<details>
+<summary>📊 Charts behind the findings</summary>
 
-## 6. Future work
-- **Label more articles (300+):** the meaning model's learning curve is still rising at 120 labels. Start with the articles it is least confident about (active learning).
-- **Richer input:** save the full article text when fetching, not just the headline.
-- **Fine-tune a small BERT model** on the labels, the next step up from fixed sentence embeddings, once there are a few hundred labels.
-- Use spaCy NER for places and organisations, to reduce "Unknown" states.
-- Run the collection daily (GitHub Actions) and deploy the dashboard publicly.
+![Events over time](charts/1_events_over_time.png)
+![Protests by state](charts/2_protests_by_state.png)
+![Exams](charts/3_exams.png)
+![Organisations](charts/4_organisations.png)
+![Confusion matrix](charts/confusion_matrix.png)
 
-## How to run
-| What | How |
-| --- | --- |
-| Notebook | Open `CJP_v2.ipynb` in Colab, upload `CJp_Dataset spreadsheet (1).xlsx` and `data/labels.csv`, then *Run all*. Locally, the spreadsheet is read from the parent folder. |
-| Dashboard | `pip install -r requirements.txt` then `streamlit run app.py` |
-| Online | Deployed on Streamlit Community Cloud from this GitHub repo (main file: `app.py`) |
+</details>
 
-| File | Contents |
-| --- | --- |
-| `data/clean_articles.csv` | Cleaned articles with the fixed rules |
-| `data/labels.csv` | The 150-article answer key |
-| `data/final_dataset.csv` | Every article with its Event Type |
-| `models/event_type_embeddings.joblib` | The final model (embeddings + Logistic Regression) |
-| `models/event_type.joblib` | The word model (TF-IDF + Logistic Regression), used for word explanations |
-| `charts/` | The charts used in the findings |
+## 5. Limitations and future work
 
-## Demo script (5 minutes)
+**Limitations**
+- **Headlines only:** the original pipeline didn't save full article text.
+- **Small answer key:** 150 labels, so the single test-set score is noisy. Cross-validation is the reliable number.
+- **Collection bias:** Google News returns the newest results first, so early August 2026 is over-represented.
+- **One label per field:** an article about two exams or states gets only the first match.
+- **AI-suggested labels** may have influenced the answer key.
+
+**Future work**
+- **Label 300+ articles:** the meaning model is still improving at 120. Start with its least-confident predictions (*active learning*).
+- **Save full article text** when fetching.
+- **Fine-tune a small BERT model** once there are a few hundred labels.
+- **spaCy NER** for places and organisations, to reduce "Unknown" states.
+- **Daily automatic collection** with GitHub Actions.
+
+## 6. Run it yourself
+
+```bash
+git clone https://github.com/realadityagupta/cjp-protest-tracker.git
+cd cjp-protest-tracker
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The first prediction in the 🤖 tab downloads the embedding model (about 90 MB).
+
+**Notebook:** open `CJP_v2.ipynb` in Jupyter or Google Colab and *Run all*. In Colab, upload `CJp_Dataset spreadsheet (1).xlsx` and `data/labels.csv` first.
+
+### Project structure
+```
+├── app.py                         Streamlit dashboard
+├── CJP_v2.ipynb                   Full analysis: cleaning → rules → ML → evaluation → charts
+├── CJp_Dataset spreadsheet (1).xlsx   Input: 2,072 articles from the internship pipeline
+├── requirements.txt               Dependencies (CPU-only PyTorch for deployment)
+├── data/
+│   ├── final_dataset.csv          Every article with its Event Type, state, exam, organisations
+│   ├── labels.csv                 The 150-article answer key
+│   ├── clean_articles.csv         Cleaned articles with the fixed rules
+│   └── *.csv                      Evaluation results (comparison, learning curve, errors)
+├── models/
+│   ├── event_type_embeddings.joblib   Final model (meaning)
+│   └── event_type.joblib              Word model (used for "Why?" explanations)
+├── charts/                        Charts used in this README
+└── docs/                          Dashboard screenshot
+```
+
+**Tech:** Python · pandas · regex · RapidFuzz · scikit-learn · Sentence Transformers · Matplotlib · Altair · Streamlit
+
+<details>
+<summary>🎤 Demo script (5 minutes)</summary>
+
 1. **The problem (30 s):** paper leaks led to the 2026 CJP student protests, but the news is scattered.
-2. **What I built first (30 s):** the original pipeline, and why its data was unreliable (the CAT/education example).
-3. **The fix (1 min):** the before/after table in the notebook.
-4. **The ML part (1.5 min):** the 4 labels, the 150-article answer key, the error analysis of the word model ("it counts words: 'paper leak' drowns out the real action"), then the fix ("a meaning model: F1 0.42 → 0.77 on the test set, 0.74 vs 0.66 over 25 tests"), the learning curve ("the meaning model is still rising, so more labels is the next step"), the confusion matrix, the top words.
-5. **The dashboard (1.5 min):** filter Event Type to *Protest*, show Delhi and Jharkhand, search "hunger strike", open an article. Then open **🤖 Try the model** and ask the teacher to type a headline of their own.
+2. **What I built first (30 s):** the internship pipeline, and why its data was unreliable (the CAT/education example).
+3. **The fix (1 min):** the before/after table.
+4. **The ML part (1.5 min):** the 4 labels and the 150-article answer key → error analysis of the word model ("it counts words") → the fix, a meaning model (0.74 vs 0.66 over 25 tests) → the learning curve ("still rising, so more labels next").
+5. **The dashboard (1.5 min):** filter to *Protest*, show Delhi and Jharkhand, search "hunger strike". Then open **🤖 Try the model**, pick *"Government cancels recruitment exam…"* (the meaning model is right and the word model is wrong), and invite the teacher to type their own headline.
 6. **Limitations and next steps (30 s).**
+
+</details>
