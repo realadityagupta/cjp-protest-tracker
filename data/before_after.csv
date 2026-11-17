@@ -1,0 +1,8 @@
+,Original output,Old rules on cleaned text,New rules
+Exam = Unknown,54%,60%,56%
+State = Unknown,71%,72%,66%
+CAT / NDA / MAT labels,297,188,2
+Rows with HTML junk (&nbsp;),1772,0,0
+Exam Year guessed from publish date,1733,—,0
+Duplicate stories removed,0,0,78
+Rows with an organisation found,—,—,38%

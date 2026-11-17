@@ -1,0 +1,12 @@
+True label,Predicted as,Mistakes
+Court & Govt response,Leak & Investigation,11
+Not relevant,Protest,6
+Not relevant,Leak & Investigation,5
+Leak & Investigation,Court & Govt response,4
+Leak & Investigation,Not relevant,4
+Protest,Leak & Investigation,4
+Protest,Not relevant,3
+Not relevant,Court & Govt response,2
+Protest,Court & Govt response,2
+Court & Govt response,Not relevant,1
+Leak & Investigation,Protest,1

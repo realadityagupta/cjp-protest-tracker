@@ -1,0 +1,4 @@
+,Old keyword rules,ML model (TF-IDF + LR),Final model (embeddings + LR)
+"Accuracy (test set, 30 rows)",0.5,0.6,0.77
+Macro F1 (test set),0.42,0.57,0.77
+Macro F1 (all 150 / 5-fold CV),0.41,0.7,0.74
